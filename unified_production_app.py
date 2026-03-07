@@ -18,6 +18,23 @@ cipher = Fernet(ENCRYPTION_KEY.encode()) if ENCRYPTION_KEY else None
 POSTGRES_DSN = f"postgresql://{os.getenv('DB_USER', 'admin')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('DB_HOST', 'postgres')}:5432/{os.getenv('DB_NAME', 'tokenoptimizer')}"
 security = HTTPBearer()
 
+# Initialize Redis and Semantic Cache
+try:
+    import redis as redis_lib
+    from semantic_cache import SemanticCache
+    
+    redis_client = redis_lib.Redis(
+        host=os.getenv('REDIS_HOST', 'redis'),
+        port=6379,
+        db=0,
+        decode_responses=True
+    )
+    semantic_cache = SemanticCache(redis_client, similarity_threshold=0.85)
+    print("✓ Semantic cache initialized!")
+except Exception as e:
+    print(f"⚠ Semantic cache disabled: {e}")
+    semantic_cache = None
+
 def get_db():
     return psycopg2.connect(POSTGRES_DSN)
 
@@ -115,6 +132,27 @@ class OptReq(BaseModel):
     messages: List[Dict]
     max_tokens: Optional[int] = 1024
 
+class BatchOptReq(BaseModel):
+    requests: List[OptReq]
+    max_tokens: Optional[int] = 1024
+
+class UserReg(BaseModel):
+    email: EmailStr
+    password: str
+    company_name: str
+    full_name: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class AddKey(BaseModel):
+    api_key: str
+
+class OptReq(BaseModel):
+    messages: List[Dict]
+    max_tokens: Optional[int] = 1024
+
 @app.get("/")
 def root():
     return {"message": "Monse.AI"}
@@ -151,24 +189,6 @@ def me(u: Dict = Depends(get_user_token)):
     can, why = can_use(u)
     return {"email": u['email'], "has_access": can, "reason": why, "trial_ends": str(u.get('trial_ends_at', ''))}
 
-@app.post("/api/v1/user/anthropic-key")
-def add_key(d: AddKey, u: Dict = Depends(get_user_token)):
-    enc = encrypt_api_key(d.api_key)
-    conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    if not u.get('anthropic_api_key_encrypted'):
-        te = datetime.utcnow() + timedelta(days=7)
-        cur.execute("UPDATE users SET anthropic_api_key_encrypted=%s, trial_started_at=CURRENT_TIMESTAMP, trial_ends_at=%s, subscription_status='trial' WHERE id=%s RETURNING trial_ends_at", (enc, te, u['id']))
-        r = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"success": True, "trial_ends": r['trial_ends_at'].isoformat(), "days": 7}
-    cur.execute("UPDATE users SET anthropic_api_key_encrypted=%s WHERE id=%s", (enc, u['id']))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return {"success": True}
 
 @app.post("/api/v1/optimize")
 def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
@@ -179,6 +199,15 @@ def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
         if why == "expired":
             raise HTTPException(402, "Trial expired - upgrade to continue")
         raise HTTPException(402, "Subscription required")
+    
+    if semantic_cache:
+        try:
+            cached_response = semantic_cache.find_similar(r.messages)
+            if cached_response:
+                print(f"✓ Cache HIT for user {u['id']}")
+                return cached_response
+        except Exception as e:
+            print(f"Cache check failed: {e}")
     
     k = decrypt_api_key(u['anthropic_api_key_encrypted'])
     if not k:
@@ -213,7 +242,88 @@ def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
     cur.close()
     conn.close()
     
-    return {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}}
+    response = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+    
+    if semantic_cache:
+        try:
+            semantic_cache.store(r.messages, response)
+        except:
+            pass
+    
+    return response
+@app.post("/api/v1/optimize/batch")
+def optimize_batch(batch: BatchOptReq, u: Dict = Depends(get_user_apikey)):
+    """Process multiple requests in a batch"""
+    can, why = can_use(u)
+    if not can:
+        if why == "no_key":
+            raise HTTPException(402, "Add Anthropic key first")
+        if why == "expired":
+            raise HTTPException(402, "Trial expired - upgrade to continue")
+        raise HTTPException(402, "Subscription required")
+    
+    responses = []
+    total_cost = 0
+    total_saved = 0
+    cache_hits = 0
+    api_calls = 0
+    
+    print(f"Processing batch of {len(batch.requests)} requests...")
+    
+    for idx, req in enumerate(batch.requests):
+        cache_hit = False
+        if semantic_cache:
+            try:
+                cached = semantic_cache.find_similar(req.messages)
+                if cached:
+                    responses.append(cached)
+                    cache_hits += 1
+                    cache_hit = True
+                    print(f"  Request {idx}: Cache HIT!")
+            except:
+                pass
+        
+        if not cache_hit:
+            k = decrypt_api_key(u['anthropic_api_key_encrypted'])
+            if not k:
+                raise HTTPException(500, "Key decrypt failed")
+            
+            wc = len(" ".join([m.get('content','') for m in req.messages]).split())
+            model = "claude-sonnet-4-20250514" if wc > 50 else "claude-3-haiku-20240307"
+            
+            try:
+                res = requests.post('https://api.anthropic.com/v1/messages',
+                    headers={'x-api-key': k, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json'},
+                    json={'model': model, 'max_tokens': req.max_tokens or batch.max_tokens, 'messages': req.messages}, timeout=60)
+                res.raise_for_status()
+                d = res.json()
+                
+                pricing = {"claude-3-haiku-20240307": {"input": 0.25, "output": 1.25}, "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00}}
+                usage = d.get('usage', {})
+                it = usage.get('input_tokens', 0)
+                ot = usage.get('output_tokens', 0)
+                oc = (it * pricing[model]['input'] + ot * pricing[model]['output']) / 1000000
+                orig = (it * 3 + ot * 15) / 1000000
+                saved = orig - oc
+                
+                total_cost += oc
+                total_saved += saved
+                api_calls += 1
+                
+                response_data = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+                responses.append(response_data)
+                
+                if semantic_cache:
+                    try:
+                        semantic_cache.store(req.messages, response_data)
+                    except:
+                        pass
+                
+                print(f"  Request {idx}: API call - {model}")
+            except Exception as e:
+                responses.append({"error": str(e)})
+    
+    return {"responses": responses, "summary": {"total_requests": len(batch.requests), "cache_hits": cache_hits, "api_calls": api_calls, "total_cost": round(total_cost, 6), "total_saved": round(total_saved, 6)}}
 
 if __name__ == "__main__":
     import uvicorn
