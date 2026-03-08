@@ -34,6 +34,13 @@ try:
 except Exception as e:
     print(f"⚠ Semantic cache disabled: {e}")
     semantic_cache = None
+try:
+    from prompt_optimizer import PromptOptimizer
+    prompt_optimizer = PromptOptimizer()
+    print("✓ Prompt optimizer initialized!")
+except Exception as e:
+    print(f"⚠ Prompt optimizer disabled: {e}")
+    prompt_optimizer = None
 
 def get_db():
     return psycopg2.connect(POSTGRES_DSN)
@@ -187,6 +194,7 @@ def login(d: UserLogin):
 @app.get("/api/v1/auth/me")
 def me(u: Dict = Depends(get_user_token)):
     can, why = can_use(u)
+
     return {"email": u['email'], "has_access": can, "reason": why, "trial_ends": str(u.get('trial_ends_at', ''))}
 
 
@@ -199,6 +207,17 @@ def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
         if why == "expired":
             raise HTTPException(402, "Trial expired - upgrade to continue")
         raise HTTPException(402, "Subscription required")
+
+# 🔥 OPTIMIZE PROMPT FIRST (before cache check)
+    if prompt_optimizer:
+        try:
+            optimized_messages, tokens_saved = prompt_optimizer.optimize_messages(r.messages)
+            if tokens_saved > 0:
+                print(f"✓ Prompt optimized: saved {tokens_saved} tokens")
+                r.messages = optimized_messages
+        except Exception as e:
+            print(f"⚠ Prompt optimization failed: {e}")
+    
     
     if semantic_cache:
         try:

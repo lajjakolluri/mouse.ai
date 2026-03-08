@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
- COPY unified_production_app.py semantic_cache.py ./
+COPY unified_production_app.py semantic_cache.py prompt_optimizer.py ./
 
 # Create logs directory
 RUN mkdir -p /app/logs
