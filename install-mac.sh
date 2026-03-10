@@ -233,7 +233,7 @@ proxy_v1 = "http://localhost:" + port + "/v1"
 home = os.path.expanduser("~")
 
 def parse_jsonc(text):
-    text = re.sub(r'(?<!:)//[^\n]*', '', text)
+    text = re.sub(r'(?<![:/])//[^\n]*', '', text)
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
     text = re.sub(r',\s*([}\]])', r'\1', text)
     text = ''.join(c for c in text if ord(c) >= 32 or c in '\t\n\r')
