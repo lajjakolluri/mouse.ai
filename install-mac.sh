@@ -236,6 +236,7 @@ def parse_jsonc(text):
     text = re.sub(r'//[^\n]*', '', text)
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
     text = re.sub(r',\s*([}\]])', r'\1', text)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     return json.loads(text)
 
 def patch(f, label):
