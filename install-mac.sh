@@ -83,7 +83,7 @@ hdr "Step 4/7  Install monse CLI"
 python3 - "$BIN_DIR/monse" "$PROXY_PORT" "$BACKEND_URL" << 'PYEOF'
 import sys, os
 p, port, backend = sys.argv[1], sys.argv[2], sys.argv[3]
-js = """
+js = """#!/usr/bin/env node
 const http=require('http'),fs=require('fs'),path=require('path'),os=require('os');
 const{spawn}=require('child_process');
 const PORT=parseInt(process.env.MONSE_PROXY_PORT||'PORT_PLACEHOLDER',10);
