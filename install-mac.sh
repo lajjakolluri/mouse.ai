@@ -266,6 +266,9 @@ def patch(f, label):
         "coder-agent.apiBase": proxy_v1,
         "coder-agent.openaiApiBase": proxy_v1,
         "coder-agent.baseUrl": proxy_v1,
+        "coderAgent.apiUrl": proxy_v1,
+        "coderAgent.apiKey": "tok_monse_YOUR_KEY",
+        "coderAgent.model": "monse-auto",
     }.items(): chk(k, v)
     models = list(cfg.get("continue.models") or [])
     monse = {"title":"Monse","provider":"openai","model":"monse-auto","apiBase":proxy_v1}
