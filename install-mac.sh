@@ -311,13 +311,10 @@ else:
     print("\n  Reload VS Code: Cmd+Shift+P -> Reload Window")
 PYEOF
 echo ""
-echo -e "${BOLD}${GREEN}╔═════════════════════════════════════════════════╗╔══════════════════════════════════════════════════╗"
-echo -e "${BOLD}${GREEN}║   Monse.ai installed successfully  v2.0 ✓       ║${RESET}"
-echo ""
 echo "[OK] Monse.ai installed successfully v2.0"
 echo ""
 echo "  1. source ~/.zshrc"
 echo "  2. monse set-key tok_monse_YOUR_KEY"
-echo "  3. Cmd+Shift+P -> Reload Window in VS Code"
+echo "  3. Reload VS Code: Cmd+Shift+P -> Reload Window"
 echo "  4. monse doctor"
 echo ""
