@@ -175,6 +175,7 @@ open(p,"w").write(js)
 os.chmod(p, 0o755)
 print("written")
 PYEOF
+head -1 "$BIN_DIR/monse" | grep -q "node" || { printf '#!/usr/bin/env node\n' | cat - "$BIN_DIR/monse" > /tmp/_monse && mv /tmp/_monse "$BIN_DIR/monse" && chmod +x "$BIN_DIR/monse"; }
 ok "CLI -> $BIN_DIR/monse"
 hdr "Step 5/7  Shell environment"
 PROFILE="$HOME/.zshrc"
