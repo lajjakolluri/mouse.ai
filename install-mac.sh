@@ -241,7 +241,7 @@ def parse_jsonc(text):
 
 def patch(f, label):
     if not os.path.exists(f): return False
-    try: cfg = parse_jsonc(open(f).read())
+    try: cfg = parse_jsonc(open(f, encoding="utf-8", errors="ignore").read())
     except Exception as e: print("  skip "+label+": "+str(e)); return False
     changed = []
     def chk(k, v):
