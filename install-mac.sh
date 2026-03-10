@@ -237,7 +237,7 @@ def parse_jsonc(text):
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
     text = re.sub(r',\s*([}\]])', r'\1', text)
     text = ''.join(c for c in text if ord(c) >= 32 or c in '\t\n\r')
-    return json.loads(text)
+    return json.loads(text, strict=False)
 
 def patch(f, label):
     if not os.path.exists(f): return False
