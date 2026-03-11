@@ -86,6 +86,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
+      - ./chat.html:/usr/share/nginx/html/chat.html:ro
     depends_on:
       - api
     networks:

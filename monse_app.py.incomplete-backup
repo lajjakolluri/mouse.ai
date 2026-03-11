@@ -267,38 +267,3 @@ async def optimize(request: OptimizeRequest, user: Dict = Depends(get_current_us
             headers={'x-api-key': their_key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json'},
             json={'model': model, 'max_tokens': request.max_tokens, 'messages': request.messages},
             timeout=60
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-        # Convert Anthropic array format → plain text
-        content = data.get("content")
-        if isinstance(content, list):
-            content = "".join(
-                block.get("text", "")
-                for block in content
-                if block.get("type") == "text"
-            )
-        
-        # Calculate costs
-        usage = data.get("usage", {})
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
-        
-        input_cost = (input_tokens / 1000) * (pricing[model]["input"] / 1000)
-        output_cost = (output_tokens / 1000) * (pricing[model]["output"] / 1000)
-        total_cost = input_cost + output_cost
-        
-        return {
-            "content": content,
-            "model": model,
-            "usage": {"input": input_tokens, "output": output_tokens},
-            "cost": {"optimized": round(total_cost, 6), "saved": 0.0}
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

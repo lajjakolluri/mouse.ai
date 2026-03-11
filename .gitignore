@@ -1,24 +1,10 @@
-# Secrets - NEVER COMMIT!
 .env
-*.env
-.env.local
-.env.production
-
-# Backups
-*.backup
-*.bak
-
-# Logs
-logs/
 *.log
-
-# Python
 __pycache__/
-*.pyc
-
-# Database
+node_modules/
+.DS_Store
+*.backup*
 postgres_data/
-*.sql.backup
-
-# Docker
-*.tar
+redis_data/
+ssl/
+logs/

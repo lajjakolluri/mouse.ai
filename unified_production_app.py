@@ -232,8 +232,9 @@ def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
     if not k:
         raise HTTPException(500, "Key decrypt failed")
     
-    wc = len(" ".join([m.get('content','') for m in r.messages]).split())
+    wc = len(next((m.get('content','') for m in reversed(r.messages) if m.get('role')=='user'),'').split())
     model = "claude-sonnet-4-20250514" if wc > 50 else "claude-3-haiku-20240307"
+    print(f"DEBUG: wc={wc}, model selected={model}")
     
     try:
         res = requests.post('https://api.anthropic.com/v1/messages',
@@ -261,7 +262,9 @@ def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
     cur.close()
     conn.close()
     
-    response = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+    print(f"DEBUG: Original content = {d.get('content')}")
+    print(f"DEBUG: Extracted content = {d.get('content')[0]['text'] if d.get('content') and len(d.get('content')) > 0 else ''}")
+    response = {"content": d.get('content')[0]['text'] if d.get('content') and len(d.get('content')) > 0 else "", "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
     
     if semantic_cache:
         try:
@@ -307,7 +310,7 @@ def optimize_batch(batch: BatchOptReq, u: Dict = Depends(get_user_apikey)):
             if not k:
                 raise HTTPException(500, "Key decrypt failed")
             
-            wc = len(" ".join([m.get('content','') for m in req.messages]).split())
+            wc = len(next((m.get('content','') for m in reversed(req.messages) if m.get('role')=='user'),'').split())
             model = "claude-sonnet-4-20250514" if wc > 50 else "claude-3-haiku-20240307"
             
             try:
@@ -329,7 +332,7 @@ def optimize_batch(batch: BatchOptReq, u: Dict = Depends(get_user_apikey)):
                 total_saved += saved
                 api_calls += 1
                 
-                response_data = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+                response_data = {"content": d.get('content')[0]['text'] if d.get('content') and len(d.get('content')) > 0 else "", "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
                 responses.append(response_data)
                 
                 if semantic_cache:

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1c1c1c;
+    --border: #2a2a2a;
+    --text: #f0f0f0;
+    --text-dim: #888;
+    --text-muted: #555;
+    --accent: #e8c97e;
+    --accent-dim: rgba(232, 201, 126, 0.12);
+    --green: #4ade80;
+    --red: #f87171;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Sora', sans-serif; font-size: 14px; line-height: 1.6; overflow: hidden; }
+
+  .app { display: flex; height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 260px; min-width: 260px; height: 100vh;
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 20px 0;
+    overflow-y: auto;
+    transition: width 0.25s ease, min-width 0.25s ease, opacity 0.2s;
+  }
+  .sidebar.collapsed { width: 0; min-width: 0; opacity: 0; overflow: hidden; padding: 0; }
+  .sidebar::-webkit-scrollbar { width: 3px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 0 20px 20px; border-bottom: 1px solid var(--border); }
+  .logo-hex { width: 28px; height: 28px; background: var(--accent); clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%); }
+  .logo-text { font-size: 15px; font-weight: 600; letter-spacing: 0.06em; }
+
+  .sidebar-section { padding: 20px 20px 0; }
+  .sidebar-label { font-size: 10px; font-weight: 500; letter-spacing: 0.12em; color: var(--text-muted); text-transform: uppercase; margin-bottom: 10px; }
+
+  .mode-option { display: flex; align-items: center; padding: 9px 11px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; transition: background 0.15s; border: 1px solid transparent; }
+  .mode-option:hover { background: var(--surface); }
+  .mode-option.active { background: var(--accent-dim); border-color: rgba(232,201,126,0.25); }
+  .mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; margin-right: 10px; }
+  .mode-option.active .mode-dot { background: var(--accent); }
+  .mode-info { flex: 1; }
+  .mode-name { font-size: 12px; font-weight: 500; }
+  .mode-sub { font-size: 11px; color: var(--text-muted); }
+  .mode-badge { font-size: 10px; font-weight: 600; color: var(--accent); }
+
+  .stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-key { color: var(--text-muted); font-size: 11px; }
+  .stat-val { font-size: 11px; font-weight: 500; }
+  .stat-val.green { color: var(--green); }
+
+  .key-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s; }
+  .key-row:hover { border-color: var(--text-muted); }
+  .key-row.active { border-color: rgba(74,222,128,0.4); }
+  .key-name { font-size: 12px; }
+  .key-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+  .key-row.active .key-dot { background: var(--green); }
+
+  /* Main */
+  .main { flex: 1; display: flex; flex-direction: column; height: 100vh; overflow: hidden; min-width: 0; }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .sidebar-toggle { width: 32px; height: 32px; border-radius: 7px; background: transparent; border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .sidebar-toggle:hover { border-color: var(--text-muted); color: var(--text); }
+  .topbar-title { font-size: 13px; color: var(--text-muted); }
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .quota-text { font-size: 11px; color: var(--text-muted); }
+  .quota-track { width: 80px; height: 3px; border-radius: 2px; background: var(--surface2); }
+  .quota-fill { height: 100%; border-radius: 2px; background: var(--accent); width: 90%; }
+  .new-chat-btn { padding: 6px 14px; border-radius: 7px; font-size: 12px; font-weight: 500; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; transition: all 0.15s; font-family: inherit; }
+  .new-chat-btn:hover { border-color: var(--text-muted); color: var(--text); }
+
+  .model-bar { display: flex; gap: 4px; padding: 10px 24px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .model-bar::-webkit-scrollbar { display: none; }
+  .model-chip { display: flex; align-items: center; gap: 6px; padding: 5px 13px; border-radius: 20px; font-size: 12px; font-weight: 500; background: transparent; border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; white-space: nowrap; transition: all 0.15s; font-family: inherit; }
+  .model-chip:hover { border-color: var(--text-muted); color: var(--text); }
+  .model-chip.active { background: var(--accent-dim); border-color: rgba(232,201,126,0.4); color: var(--accent); }
+  .model-chip-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.7; }
+
+  /* Messages */
+  .messages { flex: 1; overflow-y: auto; padding: 40px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .messages::-webkit-scrollbar { width: 4px; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; padding: 40px 24px; text-align: center; }
+  .welcome-icon { width: 50px; height: 50px; background: var(--accent); clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%); margin-bottom: 24px; }
+  .welcome h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 12px; line-height: 1.4; }
+  .welcome p { font-size: 14px; color: var(--text); max-width: 380px; line-height: 1.7; margin-bottom: 30px; }
+  .suggestion-pills { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 500px; }
+  .pill { padding: 8px 16px; border-radius: 20px; border: 1px solid var(--border); font-size: 13px; color: var(--text-dim); cursor: pointer; background: transparent; font-family: inherit; transition: all 0.15s; }
+  .pill:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  .msg-wrap { max-width: 700px; margin: 0 auto; padding: 0 24px; }
+  .msg { margin-bottom: 28px; animation: fadeUp 0.2s ease; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .msg-role { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .msg.user .msg-role { color: var(--text-muted); }
+  .msg.assistant .msg-role { color: var(--accent); }
+  .msg-body { font-size: 14px; line-height: 1.8; color: var(--text); }
+  .msg.user .msg-body { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: inline-block; max-width: 100%; }
+  .msg-meta { margin-top: 8px; display: flex; gap: 8px; }
+  .msg-badge { font-size: 10px; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); padding: 2px 8px; border-radius: 4px; }
+  .msg-badge.savings { color: var(--green); border-color: rgba(74,222,128,0.2); }
+
+  .typing { display: flex; gap: 5px; align-items: center; padding: 4px 0; }
+  .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+  /* Input */
+  .input-area { flex-shrink: 0; padding: 0 24px 20px; max-width: 700px; width: 100%; margin: 0 auto; }
+  .input-box { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; transition: border-color 0.2s; }
+  .input-box:focus-within { border-color: rgba(232,201,126,0.35); }
+  .input-row { display: flex; align-items: flex-end; gap: 10px; }
+  textarea { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.6; resize: none; min-height: 24px; max-height: 160px; }
+  textarea::placeholder { color: var(--text-muted); }
+  .send-btn { width: 34px; height: 34px; border-radius: 8px; background: var(--accent); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: opacity 0.15s; }
+  .send-btn:hover { opacity: 0.82; }
+  .input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .input-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 10px; }
+  .input-meta span::before { content: '· '; }
+  .input-meta span:first-child::before { content: ''; }
+  .input-hint { font-size: 11px; color: var(--text-muted); }
+
+  .statusbar { display: flex; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .status-item { flex: 1; padding: 8px 16px; display: flex; flex-direction: column; align-items: center; border-right: 1px solid var(--border); }
+  .status-item:last-child { border-right: none; }
+  .status-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
+  .status-val { font-size: 12px; font-weight: 600; }
+  .status-val.green { color: var(--green); }
+  .status-val.accent { color: var(--accent); }
+
+  @media (max-width: 768px) {
+    .app { flex-direction: column; }
+    .sidebar { 
+      position: fixed; left: 0; top: 0; z-index: 1000; 
+      background: var(--bg); height: 100vh; width: 260px; min-width: 260px; 
+      opacity: 1; transform: translateX(-100%); 
+      transition: transform 0.25s ease; 
+      box-shadow: 2px 0 10px rgba(0,0,0,0.3);
+    }
+    .sidebar:not(.collapsed) { transform: translateX(0); }
+    .main { width: 100%; min-width: 0; height: 100vh; margin-left: 0; }
+    .statusbar { display: none; }
+    .input-footer { display: none; }
+    .model-bar { padding: 8px 12px; overflow-x: auto; }
+    .model-chip { padding: 4px 10px; font-size: 11px; }
+    .topbar { padding: 12px 16px; }
+    .input-area { padding: 0 12px 16px; max-width: 100%; }
+    .msg-wrap { padding: 0 16px; }
+    .welcome { padding: 20px 16px; min-height: 45vh; }
+    .welcome h1 { font-size: 18px; line-height: 1.3; }
+    .welcome p { font-size: 13px; max-width: 100%; }
+    .pill { padding: 6px 12px; font-size: 12px; }
+    .suggestion-pills { max-width: 100%; }
+    .messages { padding: 20px 0; }
+    .msg { margin-bottom: 20px; }
+    textarea { font-size: 16px; } /* Prevent zoom on iOS */
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-hex"></div>
+      <span class="logo-text">MONSE</span>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Routing Mode</div>
+      <div class="mode-option active" onclick="setMode(this,'max-savings')">
+        <div class="mode-dot"></div>
+        <div class="mode-info"><div class="mode-name">Max Savings</div><div class="mode-sub">Haiku + tight cache</div></div>
+        <div class="mode-badge">−87%</div>
+      </div>
+      <div class="mode-option" onclick="setMode(this,'balanced')">
+        <div class="mode-dot"></div>
+        <div class="mode-info"><div class="mode-name">Balanced</div><div class="mode-sub">Smart routing</div></div>
+        <div class="mode-badge">−60%</div>
+      </div>
+      <div class="mode-option" onclick="setMode(this,'high-fidelity')">
+        <div class="mode-dot"></div>
+        <div class="mode-info"><div class="mode-name">High Fidelity</div><div class="mode-sub">Original model</div></div>
+        <div class="mode-badge">0%</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" style="margin-top:20px">
+      <div class="sidebar-label">Session Stats</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+        <div class="stat-row"><span class="stat-key">Messages</span><span class="stat-val" id="s-msgs">0</span></div>
+        <div class="stat-row"><span class="stat-key">Cache hits</span><span class="stat-val" id="s-cache">0</span></div>
+        <div class="stat-row"><span class="stat-key">You saved</span><span class="stat-val green" id="s-saved">$0.0000</span></div>
+        <div class="stat-row"><span class="stat-key">Monse earned</span><span class="stat-val" id="s-earned">$0.0000</span></div>
+        <div class="stat-row"><span class="stat-key">Actual cost</span><span class="stat-val" id="s-cost">$0.0000</span></div>
+      </div>
+    </div>
+
+    <div class="sidebar-section" style="margin-top:20px">
+      <div class="sidebar-label">API Keys</div>
+      <div class="key-row active" id="key-anthropic" onclick="toggleKey('anthropic')">
+        <span class="key-name">Anthropic</span><div class="key-dot"></div>
+      </div>
+      <div class="key-row" id="key-openai" onclick="toggleKey('openai')">
+        <span class="key-name">OpenAI</span><div class="key-dot"></div>
+      </div>
+      <div class="key-row" id="key-google" onclick="toggleKey('google')">
+        <span class="key-name">Google</span><div class="key-dot"></div>
+      </div>
+      <div class="key-row" id="key-perplexity" onclick="toggleKey('perplexity')">
+        <span class="key-name">Perplexity</span><div class="key-dot"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="sidebar-toggle" onclick="toggleSidebar()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+        <span class="topbar-title" id="topbar-mode">max-savings · claude-3-haiku · direct</span>
+      </div>
+      <div class="topbar-right">
+        <span class="quota-text">45/50 free</span>
+        <div class="quota-track"><div class="quota-fill"></div></div>
+        <button class="new-chat-btn" onclick="newChat()">New chat</button>
+      </div>
+    </div>
+
+    <div class="model-bar">
+      <button class="model-chip active" onclick="setModel(this,'claude-3-haiku')"><div class="model-chip-dot"></div>Claude Haiku</button>
+      <button class="model-chip" onclick="setModel(this,'claude-3-5-sonnet')"><div class="model-chip-dot"></div>Claude Sonnet</button>
+      <button class="model-chip" onclick="setModel(this,'gpt-4o')"><div class="model-chip-dot"></div>GPT-4o</button>
+      <button class="model-chip" onclick="setModel(this,'gemini-1.5-pro')"><div class="model-chip-dot"></div>Gemini</button>
+      <button class="model-chip" onclick="setModel(this,'perplexity')"><div class="model-chip-dot"></div>Perplexity</button>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon"></div>
+        <h1>Same AI as Claude &amp; ChatGPT —<br>save $87 per 100 prompts.</h1>
+        <p>Up to 87% cheaper — watch your savings stack in real time.</p>
+        <div class="suggestion-pills">
+          <button class="pill" onclick="sendSuggestion(this)">Explain async/await</button>
+          <button class="pill" onclick="sendSuggestion(this)">Python REST API</button>
+          <button class="pill" onclick="sendSuggestion(this)">SQL vs NoSQL</button>
+          <button class="pill" onclick="sendSuggestion(this)">Semantic caching</button>
+          <button class="pill" onclick="sendSuggestion(this)">Optimize my prompts</button>
+          <button class="pill" onclick="sendSuggestion(this)">What is prompt caching?</button>
+        </div>
+      </div>
+      <div class="msg-wrap" id="msg-container"></div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-box">
+        <div class="input-row">
+          <textarea id="input" rows="1" placeholder="Message Monse…" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" onclick="sendMessage()">
+            <svg width="14" height="14" fill="none" stroke="#0a0a0a" stroke-width="2.5" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+        <div class="input-footer">
+          <div class="input-meta">
+            <span id="meta-model">claude-3-haiku</span>
+            <span id="meta-mode">max-savings</span>
+            <span>direct to Anthropic API</span>
+          </div>
+          <div class="input-hint">Enter to send · Shift+Enter for newline</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <div class="status-item"><div class="status-label">Session Saved</div><div class="status-val green" id="b-saved">$0.0000</div></div>
+      <div class="status-item"><div class="status-label">Your Share (50%)</div><div class="status-val green" id="b-share">$0.0000</div></div>
+      <div class="status-item"><div class="status-label">Monse Share (50%)</div><div class="status-val accent" id="b-monse">$0.0000</div></div>
+      <div class="status-item"><div class="status-label">Cache Rate</div><div class="status-val" id="b-cache">0%</div></div>
+      <div class="status-item"><div class="status-label">Requests</div><div class="status-val" id="b-reqs">0</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let msgs = [], sessionSaved = 0, sessionEarned = 0, sessionCost = 0, sessionMsgs = 0, sessionCache = 0;
+let currentMode = 'max-savings', currentModel = 'claude-3-haiku', isStreaming = false, requestCount = 0;
+let sidebarOpen = window.innerWidth > 768;
+if (!sidebarOpen) document.getElementById('sidebar').classList.add('collapsed');
+const API_BASE = window.location.origin;
+const TOKEN = (() => { const m = document.cookie.match(/monse_token=([^;]+)/); return m ? m[1] : 'tok_monse_sXNDWZWNFhr0PaOEhu001RuqTaxT1Cch_zfs2xLHHwI'; })();
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+}
+
+function setMode(el, mode) {
+  document.querySelectorAll('.mode-option').forEach(m => m.classList.remove('active'));
+  el.classList.add('active');
+  currentMode = mode;
+  document.getElementById('topbar-mode').textContent = `${mode} · ${currentModel} · direct`;
+  document.getElementById('meta-mode').textContent = mode;
+}
+
+function setModel(el, model) {
+  document.querySelectorAll('.model-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  currentModel = model;
+  document.getElementById('topbar-mode').textContent = `${currentMode} · ${model} · direct`;
+  document.getElementById('meta-model').textContent = model;
+}
+
+function toggleKey(k) { document.getElementById('key-'+k).classList.toggle('active'); }
+
+function newChat() {
+  msgs = [];
+  document.getElementById('msg-container').innerHTML = '';
+  document.getElementById('welcome').style.display = 'flex';
+}
+
+function sendSuggestion(btn) { sendMessage(btn.textContent); }
+function handleKey(e) { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,160)+'px'; }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+
+function appendMsg(role, text) {
+  document.getElementById('welcome').style.display = 'none';
+  const c = document.getElementById('msg-container');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `<div class="msg-role">${role==='user'?'You':'Monse'}</div><div class="msg-body">${escHtml(text)}</div>`;
+  if (role==='assistant') {
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.innerHTML = `<span class="msg-badge">${currentModel}</span><span class="msg-badge">${currentMode}</span>`;
+    div.appendChild(meta);
+  }
+  c.appendChild(div);
+  div.scrollIntoView({block:'end',behavior:'smooth'});
+  return div;
+}
+
+async function sendMessage(override) {
+  const input = document.getElementById('input');
+  const text = override || input.value.trim();
+  if (!text || isStreaming) return;
+  input.value = ''; input.style.height = '';
+  isStreaming = true;
+  appendMsg('user', text);
+  msgs.push({role:'user', content:text});
+
+  document.getElementById('welcome').style.display = 'none';
+  const c = document.getElementById('msg-container');
+  const typingDiv = document.createElement('div');
+  typingDiv.className = 'msg assistant';
+  typingDiv.innerHTML = `<div class="msg-role">Monse</div><div class="typing"><span></span><span></span><span></span></div>`;
+  c.appendChild(typingDiv);
+  typingDiv.scrollIntoView({block:'end',behavior:'smooth'});
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/optimize`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${TOKEN}`},
+      body:JSON.stringify({messages:msgs, optimization_mode:currentMode, stream:false})
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    typingDiv.remove();
+    const reply = data.content || data.response || data.choices?.[0]?.message?.content || JSON.stringify(data);
+    msgs.push({role:'assistant', content:reply});
+    appendMsg('assistant', reply);
+    requestCount++;
+    if (data.savings) {
+      const s = data.savings;
+      sessionSaved += s.amount_saved||0;
+      sessionEarned += (s.amount_saved||0)*0.5;
+      sessionCost += s.actual_cost||0;
+      if (s.cache_hit) sessionCache++;
+    }
+    sessionMsgs++;
+    updateStats();
+  } catch(err) {
+    typingDiv.remove();
+    const errMsg = `Error: ${err.message}. Check your API key and connection.`;
+    appendMsg('assistant', errMsg);
+    msgs.push({role:'assistant', content:errMsg});
+  }
+  isStreaming = false;
+}
+
+function updateStats() {
+  const fmt = v => '$'+v.toFixed(4);
+  document.getElementById('s-msgs').textContent = sessionMsgs;
+  document.getElementById('s-cache').textContent = sessionCache;
+  document.getElementById('s-saved').textContent = fmt(sessionSaved);
+  document.getElementById('s-earned').textContent = fmt(sessionEarned);
+  document.getElementById('s-cost').textContent = fmt(sessionCost);
+  document.getElementById('b-saved').textContent = fmt(sessionSaved);
+  document.getElementById('b-share').textContent = fmt(sessionEarned);
+  document.getElementById('b-monse').textContent = fmt(sessionEarned);
+  document.getElementById('b-cache').textContent = sessionMsgs ? Math.round(sessionCache/sessionMsgs*100)+'%' : '0%';
+  document.getElementById('b-reqs').textContent = requestCount;
+}
+</script>
+</body>
+</html>

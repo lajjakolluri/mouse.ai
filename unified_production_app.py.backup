@@ -1,321 +1,352 @@
-"""TokenOptimizer Pro - With Analytics Dashboard"""
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Optional
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List, Dict
 from datetime import datetime, timedelta
-import os
-import requests
-import time
-import psycopg2
+import os, secrets, psycopg2, bcrypt, jwt, requests
 from psycopg2.extras import RealDictCursor
+from cryptography.fernet import Fernet
 
-app = FastAPI(title="TokenOptimizer Pro", version="2026.1.0")
+app = FastAPI(title="Monse.AI")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# CORS for dashboard
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+JWT_SECRET = os.getenv("JWT_SECRET", "secret")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+cipher = Fernet(ENCRYPTION_KEY.encode()) if ENCRYPTION_KEY else None
+POSTGRES_DSN = f"postgresql://{os.getenv('DB_USER', 'admin')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('DB_HOST', 'postgres')}:5432/{os.getenv('DB_NAME', 'tokenoptimizer')}"
+security = HTTPBearer()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-DB_HOST = os.getenv("DB_HOST", "postgres")
-DB_NAME = os.getenv("DB_NAME", "tokenoptimizer")
-DB_USER = os.getenv("DB_USER", "admin")
-DB_PASS = os.getenv("POSTGRES_PASSWORD")
+# Initialize Redis and Semantic Cache
+try:
+    import redis as redis_lib
+    from semantic_cache import SemanticCache
+    
+    redis_client = redis_lib.Redis(
+        host=os.getenv('REDIS_HOST', 'redis'),
+        port=6379,
+        db=0,
+        decode_responses=True
+    )
+    semantic_cache = SemanticCache(redis_client, similarity_threshold=0.85)
+    print("✓ Semantic cache initialized!")
+except Exception as e:
+    print(f"⚠ Semantic cache disabled: {e}")
+    semantic_cache = None
+try:
+    from prompt_optimizer import PromptOptimizer
+    prompt_optimizer = PromptOptimizer()
+    print("✓ Prompt optimizer initialized!")
+except Exception as e:
+    print(f"⚠ Prompt optimizer disabled: {e}")
+    prompt_optimizer = None
 
 def get_db():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS
-    )
+    return psycopg2.connect(POSTGRES_DSN)
 
-class Message(BaseModel):
-    role: str
-    content: str
+def encrypt_api_key(k):
+    return cipher.encrypt(k.encode()).decode() if cipher else k
 
-class OptimizeRequest(BaseModel):
-    messages: List[Message]
-    customer_id: Optional[str] = "default"
-    optimization_features: List[str] = ["all"]
+def decrypt_api_key(k):
+    try:
+        return cipher.decrypt(k.encode()).decode() if cipher else k
+    except:
+        return None
 
-class OptimizeResponse(BaseModel):
-    request_id: str
-    optimized_messages: List[Dict]
-    original_tokens: Dict
-    optimized_tokens: Dict
-    tokens_saved: int
-    original_cost: float
-    optimized_cost: float
-    cost_saved: float
-    model_used: str
-    cache_hit: bool
-    total_latency_ms: float
+def hash_password(p):
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(p, h):
+    return bcrypt.checkpw(p.encode(), h.encode())
+
+def create_token(uid, email):
+    return jwt.encode({"user_id": uid, "email": email, "exp": datetime.utcnow() + timedelta(hours=24)}, JWT_SECRET, algorithm="HS256")
+
+def decode_token(t):
+    try:
+        return jwt.decode(t, JWT_SECRET, algorithms=["HS256"])
+    except:
+        raise HTTPException(401, "Invalid token")
+
+def get_user_by_email(email):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+    u = cur.fetchone()
+    cur.close()
+    conn.close()
+    return dict(u) if u else None
+
+def get_user_by_id(uid):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users WHERE id = %s", (uid,))
+    u = cur.fetchone()
+    cur.close()
+    conn.close()
+    return dict(u) if u else None
+
+def get_user_by_key(k):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users WHERE primary_api_key = %s", (k,))
+    u = cur.fetchone()
+    cur.close()
+    conn.close()
+    return dict(u) if u else None
+
+async def get_user_token(c: HTTPAuthorizationCredentials = Depends(security)):
+    p = decode_token(c.credentials)
+    u = get_user_by_id(p["user_id"])
+    if not u:
+        raise HTTPException(401, "Not found")
+    return u
+
+async def get_user_apikey(c: HTTPAuthorizationCredentials = Depends(security)):
+    u = get_user_by_key(c.credentials)
+    if not u:
+        raise HTTPException(401, "Invalid key")
+    return u
+
+def can_use(u):
+    if u.get('is_admin'):
+        return True, "admin"
+    if not u.get('anthropic_api_key_encrypted'):
+        return False, "no_key"
+    if u['subscription_status'] == 'trial' and u.get('trial_ends_at'):
+        if datetime.fromisoformat(str(u['trial_ends_at'])) > datetime.utcnow():
+            return True, "trial"
+        return False, "expired"
+    if u['subscription_status'] == 'active':
+        return True, "active"
+    return False, u['subscription_status']
+
+class UserReg(BaseModel):
+    email: EmailStr
+    password: str
+    company_name: str
+    full_name: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class AddKey(BaseModel):
+    api_key: str
+
+class OptReq(BaseModel):
+    messages: List[Dict]
+    max_tokens: Optional[int] = 1024
+
+class BatchOptReq(BaseModel):
+    requests: List[OptReq]
+    max_tokens: Optional[int] = 1024
+
+class UserReg(BaseModel):
+    email: EmailStr
+    password: str
+    company_name: str
+    full_name: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class AddKey(BaseModel):
+    api_key: str
+
+class OptReq(BaseModel):
+    messages: List[Dict]
+    max_tokens: Optional[int] = 1024
 
 @app.get("/")
 def root():
-    return {
-        "message": "TokenOptimizer Pro API",
-        "status": "operational",
-        "version": "2026.1.0",
-        "services": {"redis": True, "postgres": True, "qdrant": True, "anthropic": True}
-    }
+    return {"message": "Monse.AI"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "version": "2026.1.0"}
+    return {"status": "healthy"}
 
-@app.post("/api/v1/optimize", response_model=OptimizeResponse)
-def optimize(request: OptimizeRequest):
-    """REAL optimization with analytics tracking"""
-    
-    if not ANTHROPIC_API_KEY:
-        raise HTTPException(status_code=500, detail="Anthropic API key not configured")
-    
-    start_time = time.time()
-    request_id = f"req_{int(time.time())}_{os.urandom(4).hex()}"
-    
-    # Analyze query complexity
-    query = request.messages[-1].content if request.messages else ""
-    word_count = len(query.split())
-    
-    # Smart model routing
-    if word_count > 50:
-        model = "claude-sonnet-4-20250514"
-        input_price = 3.00
-        output_price = 15.00
-    else:
-        model = "claude-3-haiku-20240307"
-        input_price = 0.25
-        output_price = 1.25
-    
-    # Call Anthropic API
-    try:
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01"
-            },
-            json={
-                "model": model,
-                "max_tokens": 1024,
-                "messages": [msg.dict() for msg in request.messages]
-            },
-            timeout=30.0
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Anthropic API error: {str(e)}")
-    
-    # Extract usage
-    usage = data.get("usage", {})
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    total_tokens = input_tokens + output_tokens
-    
-    # Calculate costs
-    optimized_cost = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
-    original_cost = (input_tokens * 3.00 + output_tokens * 15.00) / 1_000_000
-    cost_saved = original_cost - optimized_cost
-    tokens_saved = int((output_tokens * 0.4) if model == "claude-3-haiku-20240307" else 0)
-    
-    latency = (time.time() - start_time) * 1000
-    
-    # Log to database
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO api_usage 
-            (request_id, customer_id, model_used, input_tokens, output_tokens, 
-             total_tokens, original_cost, optimized_cost, cost_saved, 
-             cache_hit, latency_ms, query_complexity)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (request_id, request.customer_id, model, input_tokens, output_tokens,
-              total_tokens, original_cost, optimized_cost, cost_saved,
-              False, latency, word_count))
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(f"Database error: {e}")
-    
-    return OptimizeResponse(
-        request_id=request_id,
-        optimized_messages=[msg.dict() for msg in request.messages],
-        original_tokens={"input": input_tokens, "output": output_tokens, "total": total_tokens},
-        optimized_tokens={"input": input_tokens, "output": output_tokens, "total": total_tokens},
-        tokens_saved=tokens_saved,
-        original_cost=original_cost,
-        optimized_cost=optimized_cost,
-        cost_saved=cost_saved,
-        model_used=model,
-        cache_hit=False,
-        total_latency_ms=latency
-    )
+@app.post("/api/v1/auth/register")
+def register(d: UserReg):
+    if get_user_by_email(d.email):
+        raise HTTPException(400, "Email exists")
+    h = hash_password(d.password)
+    k = f"tok_monse_{secrets.token_urlsafe(32)}"
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("INSERT INTO users (email, password_hash, company_name, full_name, primary_api_key, plan, subscription_status) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, email, primary_api_key", 
+                (d.email, h, d.company_name, d.full_name, k, 'trial', 'pending'))
+    u = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"access_token": create_token(u['id'], u['email']), "user": dict(u)}
 
-@app.get("/api/v1/analytics/current")
-def get_current_stats():
-    """Get current day statistics"""
-    try:
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Today's stats
-        cur.execute("""
-            SELECT 
-                COUNT(*) as total_requests,
-                SUM(total_tokens) as total_tokens,
-                SUM(optimized_cost) as total_cost,
-                SUM(cost_saved) as total_saved,
-                AVG(latency_ms) as avg_latency,
-                COUNT(CASE WHEN model_used LIKE '%haiku%' THEN 1 END) as haiku_count,
-                COUNT(CASE WHEN model_used LIKE '%sonnet%' THEN 1 END) as sonnet_count
-            FROM api_usage
-            WHERE DATE(timestamp) = CURRENT_DATE
-        """)
-        today = cur.fetchone()
-        
-        cur.close()
-        conn.close()
-        
-        return {
-            "period": "today",
-            "total_requests": today['total_requests'] or 0,
-            "total_tokens": today['total_tokens'] or 0,
-            "total_cost": float(today['total_cost'] or 0),
-            "total_saved": float(today['total_saved'] or 0),
-            "avg_latency_ms": float(today['avg_latency'] or 0),
-            "model_distribution": {
-                "haiku": today['haiku_count'] or 0,
-                "sonnet": today['sonnet_count'] or 0
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/v1/auth/login")
+def login(d: UserLogin):
+    u = get_user_by_email(d.email)
+    if not u or not verify_password(d.password, u['password_hash']):
+        raise HTTPException(401, "Invalid")
+    return {"access_token": create_token(u['id'], u['email']), "user": {"email": u['email'], "id": u['id']}}
 
-@app.get("/api/v1/analytics/history")
-def get_history(days: int = 7):
-    """Get historical data"""
-    try:
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT 
-                DATE(timestamp) as date,
-                COUNT(*) as requests,
-                SUM(optimized_cost) as cost,
-                SUM(cost_saved) as saved
-            FROM api_usage
-            WHERE timestamp >= CURRENT_DATE - INTERVAL '%s days'
-            GROUP BY DATE(timestamp)
-            ORDER BY date DESC
-        """, (days,))
-        
-        history = cur.fetchall()
-        cur.close()
-        conn.close()
-        
-        return {
-            "period": f"last_{days}_days",
-            "data": [dict(row) for row in history]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/v1/auth/me")
+def me(u: Dict = Depends(get_user_token)):
+    can, why = can_use(u)
 
-@app.get("/api/v1/analytics/calls")
-def get_recent_calls(limit: int = 50):
-    """Get recent API calls breakdown"""
-    try:
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cur.execute("""
-            SELECT 
-                request_id,
-                timestamp,
-                model_used,
-                input_tokens,
-                output_tokens,
-                total_tokens,
-                optimized_cost,
-                cost_saved,
-                latency_ms
-            FROM api_usage
-            ORDER BY timestamp DESC
-            LIMIT %s
-        """, (limit,))
-        
-        calls = cur.fetchall()
-        cur.close()
-        conn.close()
-        
-        return {"calls": [dict(row) for row in calls]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"email": u['email'], "has_access": can, "reason": why, "trial_ends": str(u.get('trial_ends_at', ''))}
 
-@app.get("/api/v1/analytics/projection")
-def get_projection():
-    """Project future costs based on current usage"""
+
+@app.post("/api/v1/optimize")
+def optimize(r: OptReq, u: Dict = Depends(get_user_apikey)):
+    can, why = can_use(u)
+    if not can:
+        if why == "no_key":
+            raise HTTPException(402, "Add Anthropic key first")
+        if why == "expired":
+            raise HTTPException(402, "Trial expired - upgrade to continue")
+        raise HTTPException(402, "Subscription required")
+
+# 🔥 OPTIMIZE PROMPT FIRST (before cache check)
+    if prompt_optimizer:
+        try:
+            optimized_messages, tokens_saved = prompt_optimizer.optimize_messages(r.messages)
+            if tokens_saved > 0:
+                print(f"✓ Prompt optimized: saved {tokens_saved} tokens")
+                r.messages = optimized_messages
+        except Exception as e:
+            print(f"⚠ Prompt optimization failed: {e}")
+    
+    
+    if semantic_cache:
+        try:
+            cached_response = semantic_cache.find_similar(r.messages)
+            if cached_response:
+                print(f"✓ Cache HIT for user {u['id']}")
+                return cached_response
+        except Exception as e:
+            print(f"Cache check failed: {e}")
+    
+    k = decrypt_api_key(u['anthropic_api_key_encrypted'])
+    if not k:
+        raise HTTPException(500, "Key decrypt failed")
+    
+    wc = len(next((m.get('content','') for m in reversed(r.messages) if m.get('role')=='user'),'').split())
+    model = "claude-sonnet-4-20250514" if wc > 50 else "claude-3-haiku-20240307"
+    
     try:
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Get last 7 days average
-        cur.execute("""
-            SELECT 
-                AVG(daily_requests) as avg_daily_requests,
-                AVG(daily_cost) as avg_daily_cost,
-                AVG(daily_saved) as avg_daily_saved
-            FROM (
-                SELECT 
-                    DATE(timestamp) as date,
-                    COUNT(*) as daily_requests,
-                    SUM(optimized_cost) as daily_cost,
-                    SUM(cost_saved) as daily_saved
-                FROM api_usage
-                WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
-                GROUP BY DATE(timestamp)
-            ) daily_stats
-        """)
-        
-        avg = cur.fetchone()
-        cur.close()
-        conn.close()
-        
-        avg_daily_requests = float(avg['avg_daily_requests'] or 0)
-        avg_daily_cost = float(avg['avg_daily_cost'] or 0)
-        avg_daily_saved = float(avg['avg_daily_saved'] or 0)
-        
-        return {
-            "current_daily_average": {
-                "requests": avg_daily_requests,
-                "cost": avg_daily_cost,
-                "saved": avg_daily_saved
-            },
-            "monthly_projection": {
-                "requests": avg_daily_requests * 30,
-                "cost": avg_daily_cost * 30,
-                "saved": avg_daily_saved * 30
-            },
-            "annual_projection": {
-                "requests": avg_daily_requests * 365,
-                "cost": avg_daily_cost * 365,
-                "saved": avg_daily_saved * 365
-            }
-        }
+        res = requests.post('https://api.anthropic.com/v1/messages',
+                           headers={'x-api-key': k, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'Content-Type': 'application/json'},
+                           json={'model': model, 'max_tokens': r.max_tokens, 'messages': r.messages, 'system': [{'type':'text','text':'You are a helpful AI coding assistant.','cache_control':{'type':'ephemeral'}}]}, timeout=60)
+        res.raise_for_status()
+        d = res.json()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
+    
+    pricing = {"claude-3-haiku-20240307": {"input": 0.25, "output": 1.25}, "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00}}
+    usage = d.get('usage', {})
+    it = usage.get('input_tokens', 0)
+    ot = usage.get('output_tokens', 0)
+    crt = usage.get('cache_read_input_tokens', 0)
+    cwt = usage.get('cache_creation_input_tokens', 0)
+    oc = ((it * pricing[model]['input']) + (ot * pricing[model]['output']) + (crt * pricing[model]['input'] * 0.1) + (cwt * pricing[model]['input'] * 1.25)) / 1000000
+    orig = (it * 3 + ot * 15) / 1000000
+    saved = orig - oc
+    
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO api_usage (user_id, model_used, input_tokens, output_tokens, total_tokens, original_cost, optimized_cost, cost_saved) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (u['id'], model, it, ot, it+ot, orig, oc, saved))
+    cur.execute("UPDATE users SET total_savings_usd = COALESCE(total_savings_usd,0) + %s WHERE id=%s", (saved, u['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    response = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+    
+    if semantic_cache:
+        try:
+            semantic_cache.store(r.messages, response)
+        except:
+            pass
+    
+    return response
+@app.post("/api/v1/optimize/batch")
+def optimize_batch(batch: BatchOptReq, u: Dict = Depends(get_user_apikey)):
+    """Process multiple requests in a batch"""
+    can, why = can_use(u)
+    if not can:
+        if why == "no_key":
+            raise HTTPException(402, "Add Anthropic key first")
+        if why == "expired":
+            raise HTTPException(402, "Trial expired - upgrade to continue")
+        raise HTTPException(402, "Subscription required")
+    
+    responses = []
+    total_cost = 0
+    total_saved = 0
+    cache_hits = 0
+    api_calls = 0
+    
+    print(f"Processing batch of {len(batch.requests)} requests...")
+    
+    for idx, req in enumerate(batch.requests):
+        cache_hit = False
+        if semantic_cache:
+            try:
+                cached = semantic_cache.find_similar(req.messages)
+                if cached:
+                    responses.append(cached)
+                    cache_hits += 1
+                    cache_hit = True
+                    print(f"  Request {idx}: Cache HIT!")
+            except:
+                pass
+        
+        if not cache_hit:
+            k = decrypt_api_key(u['anthropic_api_key_encrypted'])
+            if not k:
+                raise HTTPException(500, "Key decrypt failed")
+            
+            wc = len(next((m.get('content','') for m in reversed(req.messages) if m.get('role')=='user'),'').split())
+            model = "claude-sonnet-4-20250514" if wc > 50 else "claude-3-haiku-20240307"
+            
+            try:
+                res = requests.post('https://api.anthropic.com/v1/messages',
+                    headers={'x-api-key': k, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'prompt-caching-2024-07-31', 'Content-Type': 'application/json'},
+                    json={'model': model, 'max_tokens': req.max_tokens or batch.max_tokens, 'messages': req.messages, 'system': [{'type':'text','text':'You are a helpful AI coding assistant.','cache_control':{'type':'ephemeral'}}]}, timeout=60)
+                res.raise_for_status()
+                d = res.json()
+                
+                pricing = {"claude-3-haiku-20240307": {"input": 0.25, "output": 1.25}, "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00}}
+                usage = d.get('usage', {})
+                it = usage.get('input_tokens', 0)
+                ot = usage.get('output_tokens', 0)
+                crt = usage.get('cache_read_input_tokens', 0)
+                cwt = usage.get('cache_creation_input_tokens', 0)
+                oc = ((it * pricing[model]['input']) + (ot * pricing[model]['output']) + (crt * pricing[model]['input'] * 0.1) + (cwt * pricing[model]['input'] * 1.25)) / 1000000
+                orig = (it * 3 + ot * 15) / 1000000
+                saved = orig - oc
+                
+                total_cost += oc
+                total_saved += saved
+                api_calls += 1
+                
+                response_data = {"content": d.get('content'), "model": model, "usage": {"input": it, "output": ot}, "cost": {"optimized": round(oc,6), "original": round(orig,6), "saved": round(saved,6)}, "cache_hit": False}
+                responses.append(response_data)
+                
+                if semantic_cache:
+                    try:
+                        semantic_cache.store(req.messages, response_data)
+                    except:
+                        pass
+                
+                print(f"  Request {idx}: API call - {model}")
+            except Exception as e:
+                responses.append({"error": str(e)})
+    
+    return {"responses": responses, "summary": {"total_requests": len(batch.requests), "cache_hits": cache_hits, "api_calls": api_calls, "total_cost": round(total_cost, 6), "total_saved": round(total_saved, 6)}}
 
 if __name__ == "__main__":
     import uvicorn
